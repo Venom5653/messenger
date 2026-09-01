@@ -239,18 +239,26 @@ public class MessageService {
             messagingTemplate.convertAndSendToUser(getUsernameByUserId(message.getSenderId(), authorization), "/queue/message-read", event);
         }
     }
+
     private String getUsernameByUserId(
             Long userId,
             String authorization
     ) {
 
-        UserProfileResponse user =
-                userClient.getUserById(
-                        userId,
-                        authorization
-                );
+        try {
 
-        return user.username();
+            UserProfileResponse user =
+                    userClient.getUserById(
+                            userId,
+                            authorization
+                    );
+
+            return user.username();
+
+        } catch (FeignException.NotFound e) {
+
+            return "Удалённый пользователь";
+        }
     }
 
     private Long getCurrentUserId(Authentication authentication, String authorization) {
@@ -277,19 +285,58 @@ public class MessageService {
         return user.id();
     }
 
-    private MessageResponse toResponse(Message message, String authorization) {
+    private MessageResponse toResponse(
+            Message message,
+            String authorization
+    ) {
 
-        UserProfileResponse sender = userClient.getUserById(message.getSenderId(), authorization);
+        UserProfileResponse sender =
+                getUserOrDeleted(
+                        message.getSenderId(),
+                        authorization
+                );
 
+        UserProfileResponse recipient =
+                getUserOrDeleted(
+                        message.getRecipientId(),
+                        authorization
+                );
 
-        UserProfileResponse recipient = userClient.getUserById(message.getRecipientId(), authorization);
-
-
-        return new MessageResponse(message.getId(), message.getChatRoom().getId(), sender.username(), recipient.username(), message.getContent(), message.getCreatedAt(), message.isRead());
+        return new MessageResponse(
+                message.getId(),
+                message.getChatRoom().getId(),
+                sender.username(),
+                recipient.username(),
+                message.getContent(),
+                message.getCreatedAt(),
+                message.isRead()
+        );
     }
 
     private MessageResponse toResponse(Message message, String senderUsername, String recipientUsername) {
 
         return new MessageResponse(message.getId(), message.getChatRoom().getId(), senderUsername, recipientUsername, message.getContent(), message.getCreatedAt(), message.isRead());
+    }
+
+    private UserProfileResponse getUserOrDeleted(
+            Long userId,
+            String authorization
+    ) {
+
+        try {
+
+            return userClient.getUserById(
+                    userId,
+                    authorization
+            );
+
+        } catch (FeignException.NotFound e) {
+
+            return new UserProfileResponse(
+                    userId,
+                    "Удалённый пользователь",
+                    null
+            );
+        }
     }
 }

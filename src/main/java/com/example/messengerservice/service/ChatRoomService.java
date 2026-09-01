@@ -117,35 +117,84 @@ public class ChatRoomService {
     }
 
 
-    private ChatRoomResponse toResponse(ChatRoom chatRoom, String authorization, Long currentUserId) {
+    private ChatRoomResponse toResponse(
+            ChatRoom chatRoom,
+            String authorization,
+            Long currentUserId
+    ) {
 
-        UserProfileResponse user1 = userClient.getUserById(chatRoom.getUser1Id(), authorization);
+        UserProfileResponse user1 =
+                getUserOrDeleted(
+                        chatRoom.getUser1Id(),
+                        authorization
+                );
 
-        UserProfileResponse user2 = userClient.getUserById(chatRoom.getUser2Id(), authorization);
+        UserProfileResponse user2 =
+                getUserOrDeleted(
+                        chatRoom.getUser2Id(),
+                        authorization
+                );
 
+        Message lastMessage =
+                messageRepository
+                        .findTopByChatRoomIdOrderByCreatedAtDesc(
+                                chatRoom.getId()
+                        )
+                        .orElse(null);
 
-        Message lastMessage = messageRepository.findTopByChatRoomIdOrderByCreatedAtDesc(chatRoom.getId()).orElse(null);
-
-
-        long unreadCount = messageRepository.countByChatRoomIdAndRecipientIdAndReadFalse(chatRoom.getId(), currentUserId);
-
+        long unreadCount =
+                messageRepository
+                        .countByChatRoomIdAndRecipientIdAndReadFalse(
+                                chatRoom.getId(),
+                                currentUserId
+                        );
 
         return new ChatRoomResponse(
 
                 chatRoom.getId(),
 
-                chatRoom.getUser1Id(), chatRoom.getUser2Id(),
+                chatRoom.getUser1Id(),
+                chatRoom.getUser2Id(),
 
-                user1.username(), user2.username(),
+                user1.username(),
+                user2.username(),
 
-                user1.avatar(), user2.avatar(),
+                user1.avatar(),
+                user2.avatar(),
 
-                lastMessage != null ? lastMessage.getContent() : null,
+                lastMessage != null
+                        ? lastMessage.getContent()
+                        : null,
 
-                lastMessage != null ? lastMessage.getCreatedAt() : null,
+                lastMessage != null
+                        ? lastMessage.getCreatedAt()
+                        : null,
 
                 unreadCount,
 
-                chatRoom.getCreatedAt());
+                chatRoom.getCreatedAt()
+        );
+    }
+
+    private UserProfileResponse getUserOrDeleted(
+            Long userId,
+            String authorization
+    ) {
+
+        try {
+
+            return userClient.getUserById(
+                    userId,
+                    authorization
+            );
+
+        } catch (FeignException.NotFound e) {
+
+            return new UserProfileResponse(
+                    userId,
+                    "Удалённый пользователь",
+                    null
+            );
+        }
     }
 }
