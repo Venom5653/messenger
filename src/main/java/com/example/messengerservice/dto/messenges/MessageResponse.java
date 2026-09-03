@@ -1,4 +1,4 @@
-package com.example.messengerservice.dto;
+package com.example.messengerservice.dto.messenges;
 
 import java.time.LocalDateTime;
 

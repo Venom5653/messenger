@@ -1,7 +1,7 @@
 package com.example.messengerservice.controller;
 
-import com.example.messengerservice.dto.ChatRoomResponse;
-import com.example.messengerservice.dto.CreateChatRequest;
+import com.example.messengerservice.dto.chat.ChatRoomResponse;
+import com.example.messengerservice.dto.chat.CreateChatRequest;
 import com.example.messengerservice.service.ChatRoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

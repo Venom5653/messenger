@@ -1,8 +1,8 @@
 package com.example.messengerservice.service;
 
 import com.example.messengerservice.client.UserClient;
-import com.example.messengerservice.dto.ChatRoomResponse;
-import com.example.messengerservice.dto.CreateChatRequest;
+import com.example.messengerservice.dto.chat.ChatRoomResponse;
+import com.example.messengerservice.dto.chat.CreateChatRequest;
 import com.example.messengerservice.dto.UserProfileResponse;
 import com.example.messengerservice.entity.ChatRoom;
 import com.example.messengerservice.entity.Message;

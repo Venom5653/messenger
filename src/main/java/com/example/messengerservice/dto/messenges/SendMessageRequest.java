@@ -1,4 +1,4 @@
-package com.example.messengerservice.dto;
+package com.example.messengerservice.dto.messenges;
 
 import jakarta.validation.constraints.NotBlank;
 

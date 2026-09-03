@@ -1,8 +1,8 @@
 package com.example.messengerservice.controller;
 
-import com.example.messengerservice.dto.ChatMessageRequest;
-import com.example.messengerservice.dto.MessageResponse;
-import com.example.messengerservice.dto.SendMessageRequest;
+import com.example.messengerservice.dto.chat.ChatMessageRequest;
+import com.example.messengerservice.dto.messenges.MessageResponse;
+import com.example.messengerservice.dto.messenges.SendMessageRequest;
 import com.example.messengerservice.security.WebSocketAuthInterceptor;
 import com.example.messengerservice.service.MessageService;
 import lombok.RequiredArgsConstructor;

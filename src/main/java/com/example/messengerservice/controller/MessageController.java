@@ -1,7 +1,7 @@
 package com.example.messengerservice.controller;
 
-import com.example.messengerservice.dto.MessageResponse;
-import com.example.messengerservice.dto.SendMessageRequest;
+import com.example.messengerservice.dto.messenges.MessageResponse;
+import com.example.messengerservice.dto.messenges.SendMessageRequest;
 import com.example.messengerservice.service.MessageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
