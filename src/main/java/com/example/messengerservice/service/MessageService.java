@@ -3,6 +3,7 @@ package com.example.messengerservice.service;
 import com.example.messengerservice.client.UserClient;
 import com.example.messengerservice.dto.messenges.MessageReadEvent;
 import com.example.messengerservice.dto.messenges.MessageResponse;
+import com.example.messengerservice.dto.messenges.MessageSentEvent;
 import com.example.messengerservice.dto.messenges.SendMessageRequest;
 import com.example.messengerservice.dto.UserProfileResponse;
 import com.example.messengerservice.entity.ChatRoom;
@@ -19,6 +20,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
 import java.util.Collections;
 import java.util.List;
 
@@ -30,6 +32,7 @@ public class MessageService {
     private final ChatRoomRepository chatRoomRepository;
     private final UserClient userClient;
     private final SimpMessagingTemplate messagingTemplate;
+    private final NotificationEventPublisher notificationEventPublisher;
 
     @Transactional
     public MessageResponse sendMessage(SendMessageRequest request, Authentication authentication, String authorization) {
@@ -107,11 +110,25 @@ public class MessageService {
         });
 
 
-        Message message = Message.builder().senderId(senderId).recipientId(recipientId).content(request.content()).chatRoom(chatRoom).build();
-
+        Message message = Message.builder()
+                .senderId(senderId)
+                .recipientId(recipientId)
+                .content(request.content())
+                .chatRoom(chatRoom)
+                .build();
 
         Message savedMessage = messageRepository.save(message);
 
+        MessageSentEvent event = new MessageSentEvent(
+                "MESSAGE_SENT",
+                savedMessage.getId(),
+                chatRoom.getId(),
+                senderUsername,
+                recipientUsername,
+                savedMessage.getContent()
+        );
+
+        notificationEventPublisher.publishMessageSent(event);
 
         return toResponse(savedMessage, senderUsername, recipientUsername);
     }
