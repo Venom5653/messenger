@@ -2,9 +2,9 @@ package com.example.messengerservice.dto.chat;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record CreateChatRequest(
+public record CreatePrivateChatRequest(
 
-        @NotBlank
+        @NotBlank(message = "Username не может быть пустым")
         String username
 
 ) {

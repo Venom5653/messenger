@@ -19,38 +19,68 @@ public class MessageController {
     private final MessageService messageService;
 
     @PostMapping
-    public MessageResponse sendMessage(@Valid @RequestBody SendMessageRequest request, Authentication authentication, @RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<MessageResponse> sendMessage(
+            @Valid @RequestBody SendMessageRequest request,
+            Authentication authentication,
+            @RequestHeader("Authorization") String authorization
+    ) {
 
-        return messageService.sendMessage(request, authentication, authorization);
-    }
-
-    @GetMapping("/conversation/{username}")
-    public List<MessageResponse> getConversation(@PathVariable String username, Authentication authentication, @RequestHeader("Authorization") String authorization) {
-
-        return messageService.getConversation(username, authentication, authorization);
+        return ResponseEntity.ok(
+                messageService.sendMessage(
+                        request,
+                        authentication,
+                        authorization
+                )
+        );
     }
 
     @GetMapping("/chat/{chatId}")
-    public List<MessageResponse> getChatMessages(@PathVariable Long chatId,
+    public ResponseEntity<List<MessageResponse>> getChatMessages(
+            @PathVariable Long chatId,
+            @RequestParam(required = false) Long beforeId,
+            @RequestParam(defaultValue = "50") int limit,
+            Authentication authentication,
+            @RequestHeader("Authorization") String authorization
+    ) {
 
-                                                 @RequestParam(required = false) Long beforeId,
-
-                                                 @RequestParam(defaultValue = "50") int limit,
-
-                                                 Authentication authentication,
-
-                                                 @RequestHeader("Authorization") String authorization) {
-
-        return messageService.getChatMessages(chatId, beforeId, limit, authentication, authorization);
+        return ResponseEntity.ok(
+                messageService.getChatMessages(
+                        chatId,
+                        beforeId,
+                        limit,
+                        authentication,
+                        authorization
+                )
+        );
     }
 
     @PutMapping("/chat/{chatId}/read")
     public ResponseEntity<Void> markChatAsRead(
-            @PathVariable Long chatId, Authentication authentication,
-            @RequestHeader("Authorization") String authorization) {
+            @PathVariable Long chatId,
+            Authentication authentication,
+            @RequestHeader("Authorization") String authorization
+    ) {
 
-        messageService.markChatAsRead(chatId, authentication, authorization);
+        messageService.markChatAsRead(
+                chatId,
+                authentication,
+                authorization
+        );
 
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/chat/{chatId}/unread")
+    public ResponseEntity<Long> getUnreadCount(
+            @PathVariable Long chatId,
+            @RequestHeader("X-User-Id") Long currentUserId
+    ) {
+
+        return ResponseEntity.ok(
+                messageService.getUnreadCount(
+                        chatId,
+                        currentUserId
+                )
+        );
     }
 }

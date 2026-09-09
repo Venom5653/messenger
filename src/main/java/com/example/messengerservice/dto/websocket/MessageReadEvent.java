@@ -1,4 +1,4 @@
-package com.example.messengerservice.dto.messenges;
+package com.example.messengerservice.dto.websocket;
 
 public record MessageReadEvent(
         Long chatId,

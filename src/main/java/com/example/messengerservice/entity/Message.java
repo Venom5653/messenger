@@ -6,7 +6,21 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "messages")
+@Table(
+        name = "messages",
+        indexes = {
+
+                @Index(
+                        name = "idx_messages_chat_created",
+                        columnList = "chat_id, created_at"
+                ),
+
+                @Index(
+                        name = "idx_messages_sender",
+                        columnList = "sender_id"
+                )
+        }
+)
 @Getter
 @Setter
 @AllArgsConstructor
@@ -15,8 +29,21 @@ import java.time.LocalDateTime;
 public class Message {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(
+            strategy = GenerationType.IDENTITY
+    )
     private Long id;
+
+
+    @ManyToOne(
+            fetch = FetchType.LAZY
+    )
+    @JoinColumn(
+            name = "chat_id",
+            nullable = false
+    )
+    private Chat chat;
+
 
     @Column(
             name = "sender_id",
@@ -24,11 +51,6 @@ public class Message {
     )
     private Long senderId;
 
-    @Column(
-            name = "recipient_id",
-            nullable = false
-    )
-    private Long recipientId;
 
     @Column(
             nullable = false,
@@ -36,21 +58,12 @@ public class Message {
     )
     private String content;
 
+
     @Column(
+            name = "created_at",
             nullable = false
     )
     private LocalDateTime createdAt;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(
-            name = "chat_room_id",
-            nullable = false
-    )
-    private ChatRoom chatRoom;
-
-    @Column(nullable = false)
-    @Builder.Default
-    private boolean read = false;
 
 
     @PrePersist

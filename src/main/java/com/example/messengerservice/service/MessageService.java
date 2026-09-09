@@ -1,15 +1,17 @@
 package com.example.messengerservice.service;
 
 import com.example.messengerservice.client.UserClient;
-import com.example.messengerservice.dto.messenges.MessageReadEvent;
+import com.example.messengerservice.dto.UserProfileResponse;
 import com.example.messengerservice.dto.messenges.MessageResponse;
 import com.example.messengerservice.dto.messenges.MessageSentEvent;
 import com.example.messengerservice.dto.messenges.SendMessageRequest;
-import com.example.messengerservice.dto.UserProfileResponse;
-import com.example.messengerservice.entity.ChatRoom;
+import com.example.messengerservice.dto.websocket.MessageReadEvent;
+import com.example.messengerservice.entity.Chat;
+import com.example.messengerservice.entity.ChatMember;
 import com.example.messengerservice.entity.Message;
 import com.example.messengerservice.exception.UserNotFoundException;
-import com.example.messengerservice.repository.ChatRoomRepository;
+import com.example.messengerservice.repository.ChatMemberRepository;
+import com.example.messengerservice.repository.ChatRepository;
 import com.example.messengerservice.repository.MessageRepository;
 import feign.FeignException;
 import lombok.RequiredArgsConstructor;
@@ -20,320 +22,829 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class MessageService {
 
+
     private final MessageRepository messageRepository;
-    private final ChatRoomRepository chatRoomRepository;
+
+    private final ChatRepository chatRepository;
+
+    private final ChatMemberRepository chatMemberRepository;
+
     private final UserClient userClient;
+
     private final SimpMessagingTemplate messagingTemplate;
+
     private final NotificationEventPublisher notificationEventPublisher;
 
+
+    // =====================================================
+    // SEND MESSAGE
+    // =====================================================
+
     @Transactional
-    public MessageResponse sendMessage(SendMessageRequest request, Authentication authentication, String authorization) {
+    public MessageResponse sendMessage(
+            SendMessageRequest request,
+            Authentication authentication,
+            String authorization
+    ) {
 
-        String senderUsername = authentication.getName();
+        Long senderId =
+                getCurrentUserId(
+                        authentication,
+                        authorization
+                );
 
 
-        UserProfileResponse sender;
+        // =================================================
+        // GET CHAT
+        // =================================================
 
-        try {
+        Chat chat =
+                chatRepository.findById(
+                        request.chatId()
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Чат не найден"
+                        )
+                );
 
-            sender = userClient.getUserByUsername(senderUsername, authorization);
 
-        } catch (FeignException.NotFound e) {
+        // =================================================
+        // CHECK MEMBERSHIP
+        // =================================================
 
-            throw new UserNotFoundException(senderUsername);
+        boolean isMember =
+                chatMemberRepository.existsByChatIdAndUserId(
+                        chat.getId(),
+                        senderId
+                );
 
-        } catch (FeignException e) {
+        if (!isMember) {
 
-            throw new IllegalStateException("Не удалось получить отправителя");
+            throw new RuntimeException(
+                    "Нет доступа к этому чату"
+            );
         }
 
 
-        Long senderId = sender.id();
+        // =================================================
+        // VALIDATE CONTENT
+        // =================================================
 
+        String content =
+                request.content().trim();
 
-        String recipientUsername = request.recipientUsername();
+        if (content.isEmpty()) {
 
-
-        UserProfileResponse recipient;
-
-        try {
-
-            recipient = userClient.getUserByUsername(recipientUsername, authorization);
-
-        } catch (FeignException.NotFound e) {
-
-            throw new UserNotFoundException(recipientUsername);
-
-        } catch (FeignException e) {
-
-            throw new IllegalStateException("Не удалось получить получателя");
+            throw new IllegalArgumentException(
+                    "Сообщение не может быть пустым"
+            );
         }
 
 
-        Long recipientId = recipient.id();
+        // =================================================
+        // CREATE MESSAGE
+        // =================================================
+
+        Message message =
+                Message.builder()
+                        .chat(chat)
+                        .senderId(senderId)
+                        .content(content)
+                        .build();
 
 
-        if (senderId.equals(recipientId)) {
-
-            throw new IllegalArgumentException("Нельзя отправить сообщение самому себе");
-        }
-
-        Long user1Id;
-        Long user2Id;
+        Message savedMessage =
+                messageRepository.save(message);
 
 
-        if (senderId.compareTo(recipientId) < 0) {
+        // =================================================
+        // UPDATE CHAT LAST MESSAGE
+        // =================================================
 
-            user1Id = senderId;
-            user2Id = recipientId;
-
-        } else {
-
-            user1Id = recipientId;
-            user2Id = senderId;
-        }
-
-
-        ChatRoom chatRoom = chatRoomRepository.findByUser1IdAndUser2Id(user1Id, user2Id).orElseGet(() -> {
-
-            ChatRoom newChat = ChatRoom.builder().user1Id(user1Id).user2Id(user2Id).build();
-
-            return chatRoomRepository.save(newChat);
-        });
-
-
-        Message message = Message.builder()
-                .senderId(senderId)
-                .recipientId(recipientId)
-                .content(request.content())
-                .chatRoom(chatRoom)
-                .build();
-
-        Message savedMessage = messageRepository.save(message);
-
-        MessageSentEvent event = new MessageSentEvent(
-                "MESSAGE_SENT",
-                savedMessage.getId(),
-                chatRoom.getId(),
-                senderUsername,
-                recipientUsername,
-                savedMessage.getContent()
+        chat.setLastMessageAt(
+                savedMessage.getCreatedAt()
         );
 
-        notificationEventPublisher.publishMessageSent(event);
+        chatRepository.save(chat);
 
-        return toResponse(savedMessage, senderUsername, recipientUsername);
+
+        // =================================================
+        // GET SENDER
+        // =================================================
+
+        UserProfileResponse sender =
+                getUserOrDeleted(
+                        senderId,
+                        authorization
+                );
+
+
+        // =================================================
+        // PUBLISH NOTIFICATIONS
+        // =================================================
+
+        publishMessageNotifications(
+                savedMessage,
+                sender,
+                authorization
+        );
+
+
+        // =================================================
+        // RESPONSE
+        // =================================================
+
+        return new MessageResponse(
+                savedMessage.getId(),
+                savedMessage.getChat().getId(),
+                savedMessage.getSenderId(),
+                sender.username(),
+                sender.avatar(),
+                savedMessage.getContent(),
+                savedMessage.getCreatedAt(),
+                false
+        );
     }
 
-    @Transactional(readOnly = true)
-    public List<MessageResponse> getConversation(String username, Authentication authentication, String authorization) {
 
-        Long currentUserId = getCurrentUserId(authentication, authorization);
+    // =====================================================
+    // PUBLISH MESSAGE NOTIFICATIONS
+    // =====================================================
+
+    private void publishMessageNotifications(
+            Message message,
+            UserProfileResponse sender,
+            String authorization
+    ) {
+
+        List<ChatMember> members =
+                chatMemberRepository.findAllByChatId(
+                        message.getChat().getId()
+                );
+
+        if (members.isEmpty()) {
+            return;
+        }
 
 
-        UserProfileResponse otherUser;
+        // =================================================
+        // COLLECT RECIPIENT IDS
+        // =================================================
+
+        List<Long> recipientIds =
+                members.stream()
+                        .map(ChatMember::getUserId)
+                        .filter(userId ->
+                                !userId.equals(
+                                        message.getSenderId()
+                                )
+                        )
+                        .distinct()
+                        .toList();
+
+
+        if (recipientIds.isEmpty()) {
+            return;
+        }
+
+
+        // =================================================
+        // BATCH LOAD USERS
+        // =================================================
+
+        List<UserProfileResponse> recipients;
 
         try {
 
-            otherUser = userClient.getUserByUsername(username, authorization);
-
-        } catch (FeignException.NotFound e) {
-
-            throw new UserNotFoundException(username);
+            recipients =
+                    userClient.getUsersByIds(
+                            recipientIds,
+                            authorization
+                    );
 
         } catch (FeignException e) {
 
-            throw new IllegalStateException("Не удалось получить пользователя");
+            System.out.println(
+                    "❌ Ошибка AuthService при batch-запросе "
+                            + "получателей: "
+                            + e.status()
+            );
+
+            return;
         }
 
-        Long otherUserId = otherUser.id();
 
-        Long user1Id;
-        Long user2Id;
+        // =================================================
+        // USER ID -> USER
+        // =================================================
 
-        if (currentUserId.compareTo(otherUserId) < 0) {
+        Map<Long, UserProfileResponse> usersById =
+                new HashMap<>();
 
-            user1Id = currentUserId;
-            user2Id = otherUserId;
+        for (UserProfileResponse user : recipients) {
 
-        } else {
+            if (user == null ||
+                    user.id() == null) {
 
-            user1Id = otherUserId;
-            user2Id = currentUserId;
+                continue;
+            }
+
+            usersById.put(
+                    user.id(),
+                    user
+            );
         }
 
-        ChatRoom chatRoom = chatRoomRepository.findByUser1IdAndUser2Id(user1Id, user2Id).orElse(null);
 
-        if (chatRoom == null) {
+        // =================================================
+        // PUBLISH EVENTS
+        // =================================================
 
-            return List.of();
+        for (Long recipientId : recipientIds) {
+
+            UserProfileResponse recipient =
+                    usersById.get(recipientId);
+
+            if (recipient == null ||
+                    recipient.username() == null ||
+                    recipient.username().isBlank()) {
+
+                continue;
+            }
+
+
+            MessageSentEvent event =
+                    new MessageSentEvent(
+                            "MESSAGE_SENT",
+                            message.getId(),
+                            message.getChat().getId(),
+                            sender.username(),
+                            recipient.username(),
+                            message.getContent()
+                    );
+
+
+            notificationEventPublisher
+                    .publishMessageSent(event);
         }
-
-        Pageable pageable = PageRequest.of(0, 50);
-
-        List<Message> messages = messageRepository.findLatestMessages(chatRoom.getId(), pageable);
-
-        Collections.reverse(messages);
-
-        return messages.stream().map(message -> toResponse(message, authorization)).toList();
     }
 
+
+    // =====================================================
+    // GET CHAT MESSAGES
+    // =====================================================
+
     @Transactional(readOnly = true)
-    public List<MessageResponse> getChatMessages(Long chatId, Long beforeId, int limit, Authentication authentication, String authorization) {
+    public List<MessageResponse> getChatMessages(
+            Long chatId,
+            Long beforeId,
+            int limit,
+            Authentication authentication,
+            String authorization
+    ) {
 
-        Long currentUserId = getCurrentUserId(authentication, authorization);
+        Long currentUserId =
+                getCurrentUserId(
+                        authentication,
+                        authorization
+                );
 
 
-        ChatRoom chatRoom = chatRoomRepository.findById(chatId).orElseThrow(() -> new RuntimeException("Чат не найден"));
+        // =================================================
+        // GET CHAT
+        // =================================================
+
+        Chat chat =
+                chatRepository.findById(chatId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Чат не найден"
+                                )
+                        );
 
 
-        boolean isParticipant = chatRoom.getUser1Id().equals(currentUserId) || chatRoom.getUser2Id().equals(currentUserId);
+        // =================================================
+        // CHECK MEMBERSHIP
+        // =================================================
 
+        boolean isMember =
+                chatMemberRepository
+                        .existsByChatIdAndUserId(
+                                chatId,
+                                currentUserId
+                        );
 
-        if (!isParticipant) {
+        if (!isMember) {
 
-            throw new RuntimeException("Нет доступа к этому чату");
+            throw new RuntimeException(
+                    "Нет доступа к этому чату"
+            );
         }
 
-        int safeLimit = Math.min(Math.max(limit, 1), 100);
+
+        // =================================================
+        // LIMIT
+        // =================================================
+
+        int safeLimit =
+                Math.min(
+                        Math.max(limit, 1),
+                        100
+                );
 
 
-        Pageable pageable = PageRequest.of(0, safeLimit);
+        Pageable pageable =
+                PageRequest.of(
+                        0,
+                        safeLimit
+                );
+
+
+        // =================================================
+        // LOAD MESSAGES
+        // =================================================
 
         List<Message> messages;
 
         if (beforeId == null) {
 
-            messages = messageRepository.findLatestMessages(chatId, pageable);
+            messages =
+                    messageRepository.findLatestMessages(
+                            chatId,
+                            pageable
+                    );
 
         } else {
 
-            messages = messageRepository.findMessagesBefore(chatId, beforeId, pageable);
+            messages =
+                    messageRepository.findMessagesBefore(
+                            chatId,
+                            beforeId,
+                            pageable
+                    );
         }
+
+
+        if (messages.isEmpty()) {
+
+            return List.of();
+        }
+
+
+        // =================================================
+        // RESTORE ASCENDING ORDER
+        // =================================================
 
         Collections.reverse(messages);
 
-        return messages.stream().map(message -> toResponse(message, authorization)).toList();
-    }
 
-    @Transactional
-    public void markChatAsRead(Long chatId, Authentication authentication, String authorization) {
+        // =================================================
+        // COLLECT SENDER IDS
+        // =================================================
 
-        Long currentUserId = getCurrentUserId(authentication, authorization);
+        List<Long> senderIds =
+                messages.stream()
+                        .map(Message::getSenderId)
+                        .distinct()
+                        .toList();
 
-        ChatRoom chatRoom = chatRoomRepository.findById(chatId).orElseThrow(() -> new RuntimeException("Чат не найден"));
 
-        boolean isParticipant = chatRoom.getUser1Id().equals(currentUserId) || chatRoom.getUser2Id().equals(currentUserId);
+        // =================================================
+        // BATCH LOAD SENDERS
+        // =================================================
 
-        if (!isParticipant) {
-            throw new RuntimeException("Нет доступа к этому чату");
+        List<UserProfileResponse> users;
+
+        try {
+
+            users =
+                    userClient.getUsersByIds(
+                            senderIds,
+                            authorization
+                    );
+
+        } catch (FeignException e) {
+
+            throw new IllegalStateException(
+                    "Не удалось получить пользователей"
+            );
         }
 
-        // Находим сообщения, которые реально были непрочитаны
-        List<Message> unreadMessages = messageRepository.findUnreadMessages(chatId, currentUserId);
 
-        if (unreadMessages.isEmpty()) {
+        // =================================================
+        // USER ID -> USER
+        // =================================================
+
+        Map<Long, UserProfileResponse> usersById =
+                new HashMap<>();
+
+        for (UserProfileResponse user : users) {
+
+            if (user == null ||
+                    user.id() == null) {
+
+                continue;
+            }
+
+            usersById.put(
+                    user.id(),
+                    user
+            );
+        }
+
+
+        // =================================================
+        // LOAD CHAT MEMBERS
+        // =================================================
+
+        List<ChatMember> chatMembers =
+                chatMemberRepository.findAllByChatId(
+                        chatId
+                );
+
+
+        // =================================================
+        // BUILD RESPONSE
+        // =================================================
+
+        return messages.stream()
+                .map(message -> {
+
+                    UserProfileResponse sender =
+                            usersById.get(
+                                    message.getSenderId()
+                            );
+
+
+                    if (sender == null) {
+
+                        sender =
+                                new UserProfileResponse(
+                                        message.getSenderId(),
+                                        "Удалённый пользователь",
+                                        null
+                                );
+                    }
+
+
+                    // =========================================
+                    // READ STATUS
+                    // =========================================
+
+                    boolean read =
+                            isMessageRead(
+                                    message,
+                                    currentUserId,
+                                    chatMembers
+                            );
+
+
+                    return new MessageResponse(
+                            message.getId(),
+                            message.getChat().getId(),
+                            message.getSenderId(),
+                            sender.username(),
+                            sender.avatar(),
+                            message.getContent(),
+                            message.getCreatedAt(),
+                            read
+                    );
+
+                })
+                .toList();
+    }
+
+
+    // =====================================================
+    // CHECK MESSAGE READ STATUS
+    // =====================================================
+
+    private boolean isMessageRead(
+            Message message,
+            Long currentUserId,
+            List<ChatMember> chatMembers
+    ) {
+
+        // =============================================
+        // MESSAGE FROM OTHER USER
+        // =============================================
+
+        if (!message.getSenderId().equals(currentUserId)) {
+
+            return true;
+        }
+
+
+        // =============================================
+        // OWN MESSAGE
+        // CHECK OTHER MEMBERS
+        // =============================================
+
+        return chatMembers.stream()
+
+                .filter(member ->
+                        !member.getUserId()
+                                .equals(currentUserId)
+                )
+
+                .anyMatch(member -> {
+
+                    Long lastReadMessageId =
+                            member.getLastReadMessageId();
+
+
+                    return lastReadMessageId != null
+                            &&
+                            lastReadMessageId >= message.getId();
+
+                });
+    }
+
+
+    // =====================================================
+    // MARK CHAT AS READ
+    // =====================================================
+
+    @Transactional
+    public void markChatAsRead(
+            Long chatId,
+            Authentication authentication,
+            String authorization
+    ) {
+
+        Long currentUserId =
+                getCurrentUserId(
+                        authentication,
+                        authorization
+                );
+
+
+        ChatMember member =
+                chatMemberRepository
+                        .findByChatIdAndUserId(
+                                chatId,
+                                currentUserId
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Нет доступа к этому чату"
+                                )
+                        );
+
+
+        Message lastMessage =
+                messageRepository
+                        .findTopByChatIdOrderByIdDesc(
+                                chatId
+                        )
+                        .orElse(null);
+
+
+        if (lastMessage == null) {
             return;
         }
 
-        // Помечаем их прочитанными
-        messageRepository.markMessagesAsRead(chatId, currentUserId);
 
-        // Отправитель — тот, кто НЕ является текущим пользователем
-        for (Message message : unreadMessages) {
+        Long currentLastRead =
+                member.getLastReadMessageId();
 
-            MessageReadEvent event = new MessageReadEvent(chatId, message.getId(), currentUserId);
 
-            // Отправляем событие отправителю сообщения
-            messagingTemplate.convertAndSendToUser(getUsernameByUserId(message.getSenderId(), authorization), "/queue/message-read", event);
+        if (currentLastRead != null &&
+                currentLastRead >= lastMessage.getId()) {
+
+            return;
+        }
+
+
+        // =================================================
+        // SAVE LAST READ MESSAGE
+        // =================================================
+
+        member.setLastReadMessageId(
+                lastMessage.getId()
+        );
+
+        chatMemberRepository.save(member);
+
+
+        // =================================================
+        // READ EVENT
+        // =================================================
+
+        List<ChatMember> members =
+                chatMemberRepository.findAllByChatId(
+                        chatId
+                );
+
+
+        MessageReadEvent event =
+                new MessageReadEvent(
+                        chatId,
+                        lastMessage.getId(),
+                        currentUserId
+                );
+
+
+        // =================================================
+        // COLLECT OTHER USERS
+        // =================================================
+
+        List<Long> userIds =
+                members.stream()
+                        .map(ChatMember::getUserId)
+                        .filter(userId ->
+                                !userId.equals(
+                                        currentUserId
+                                )
+                        )
+                        .distinct()
+                        .toList();
+
+
+        if (userIds.isEmpty()) {
+            return;
+        }
+
+
+        // =================================================
+        // BATCH LOAD USERS
+        // =================================================
+
+        List<UserProfileResponse> users;
+
+        try {
+
+            users =
+                    userClient.getUsersByIds(
+                            userIds,
+                            authorization
+                    );
+
+        } catch (FeignException e) {
+
+            System.out.println(
+                    "❌ Ошибка AuthService при batch-запросе "
+                            + "read event: "
+                            + e.status()
+            );
+
+            return;
+        }
+
+
+        // =================================================
+        // USER ID -> USER
+        // =================================================
+
+        Map<Long, UserProfileResponse> usersById =
+                new HashMap<>();
+
+        for (UserProfileResponse user : users) {
+
+            if (user == null ||
+                    user.id() == null) {
+
+                continue;
+            }
+
+            usersById.put(
+                    user.id(),
+                    user
+            );
+        }
+
+
+        // =================================================
+        // SEND READ EVENT
+        // =================================================
+
+        for (Long userId : userIds) {
+
+            UserProfileResponse user =
+                    usersById.get(userId);
+
+            if (user == null ||
+                    user.username() == null ||
+                    user.username().isBlank()) {
+
+                continue;
+            }
+
+
+            messagingTemplate.convertAndSendToUser(
+                    user.username(),
+                    "/queue/message-read",
+                    event
+            );
         }
     }
 
-    private String getUsernameByUserId(
-            Long userId,
+
+    // =====================================================
+    // UNREAD COUNT
+    // =====================================================
+
+    @Transactional(readOnly = true)
+    public long getUnreadCount(
+            Long chatId,
+            Long currentUserId
+    ) {
+
+        ChatMember member =
+                chatMemberRepository
+                        .findByChatIdAndUserId(
+                                chatId,
+                                currentUserId
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Нет доступа к этому чату"
+                                )
+                        );
+
+
+        Long lastReadMessageId =
+                member.getLastReadMessageId();
+
+
+        if (lastReadMessageId == null) {
+
+            return messageRepository
+                    .countUnreadMessagesFromBeginning(
+                            chatId,
+                            currentUserId
+                    );
+        }
+
+
+        return messageRepository
+                .countUnreadMessages(
+                        chatId,
+                        lastReadMessageId,
+                        currentUserId
+                );
+    }
+
+
+    // =====================================================
+    // CURRENT USER
+    // =====================================================
+
+    private Long getCurrentUserId(
+            Authentication authentication,
             String authorization
     ) {
+
+        if (authentication == null ||
+                authentication.getName() == null) {
+
+            throw new RuntimeException(
+                    "Пользователь не авторизован"
+            );
+        }
+
+
+        String username =
+                authentication.getName();
+
 
         try {
 
             UserProfileResponse user =
-                    userClient.getUserById(
-                            userId,
+                    userClient.getUserByUsername(
+                            username,
                             authorization
                     );
 
-            return user.username();
+            return user.id();
 
         } catch (FeignException.NotFound e) {
 
-            return "Удалённый пользователь";
-        }
-    }
-
-    private Long getCurrentUserId(Authentication authentication, String authorization) {
-
-        String username = authentication.getName();
-
-
-        UserProfileResponse user;
-
-        try {
-
-            user = userClient.getUserByUsername(username, authorization);
-
-        } catch (FeignException.NotFound e) {
-
-            throw new UserNotFoundException(username);
+            throw new UserNotFoundException(
+                    username
+            );
 
         } catch (FeignException e) {
 
-            throw new IllegalStateException("Не удалось получить пользователя");
+            throw new IllegalStateException(
+                    "Не удалось получить пользователя"
+            );
         }
-
-
-        return user.id();
     }
 
-    private MessageResponse toResponse(
-            Message message,
-            String authorization
-    ) {
 
-        UserProfileResponse sender =
-                getUserOrDeleted(
-                        message.getSenderId(),
-                        authorization
-                );
-
-        UserProfileResponse recipient =
-                getUserOrDeleted(
-                        message.getRecipientId(),
-                        authorization
-                );
-
-        return new MessageResponse(
-                message.getId(),
-                message.getChatRoom().getId(),
-                sender.username(),
-                recipient.username(),
-                message.getContent(),
-                message.getCreatedAt(),
-                message.isRead()
-        );
-    }
-
-    private MessageResponse toResponse(Message message, String senderUsername, String recipientUsername) {
-
-        return new MessageResponse(message.getId(), message.getChatRoom().getId(), senderUsername, recipientUsername, message.getContent(), message.getCreatedAt(), message.isRead());
-    }
+    // =====================================================
+    // USER
+    // =====================================================
 
     private UserProfileResponse getUserOrDeleted(
             Long userId,
@@ -353,6 +864,12 @@ public class MessageService {
                     userId,
                     "Удалённый пользователь",
                     null
+            );
+
+        } catch (FeignException e) {
+
+            throw new IllegalStateException(
+                    "Не удалось получить пользователя"
             );
         }
     }

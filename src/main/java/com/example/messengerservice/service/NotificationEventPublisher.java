@@ -1,6 +1,7 @@
 package com.example.messengerservice.service;
 
 import com.example.messengerservice.config.RabbitMQConfig;
+
 import com.example.messengerservice.dto.chat.ChatStateEvent;
 import com.example.messengerservice.dto.messenges.MessageSentEvent;
 import lombok.RequiredArgsConstructor;

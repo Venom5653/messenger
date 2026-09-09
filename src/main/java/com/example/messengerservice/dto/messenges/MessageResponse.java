@@ -8,15 +8,17 @@ public record MessageResponse(
 
         Long chatId,
 
+        Long senderId,
+
         String senderUsername,
 
-        String recipientUsername,
+        String senderAvatar,
 
         String content,
 
         LocalDateTime createdAt,
 
-        Boolean read
+        boolean read
 
 ) {
 }

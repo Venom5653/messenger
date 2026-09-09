@@ -1,10 +1,8 @@
 package com.example.messengerservice.dto.chat;
 
-public record ChatMessageRequest(
-
+public record ChatEvent(
+        String eventType,
         Long chatId,
-
-        String content
-
+        Long userId
 ) {
 }
