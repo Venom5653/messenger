@@ -83,4 +83,17 @@ public class MessageController {
                 )
         );
     }
+
+    @DeleteMapping("/chat/{messageId}")
+    public void deleteMessageById(
+            @PathVariable Long messageId,
+            Authentication authentication,
+            @RequestHeader("Authorization") String authorization
+    ) {
+        messageService.deleteMessage(
+                messageId,
+                authentication,
+                authorization
+        );
+    }
 }

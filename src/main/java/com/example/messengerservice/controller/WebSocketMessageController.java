@@ -31,156 +31,66 @@ import java.util.Map;
 public class WebSocketMessageController {
 
     private final MessageService messageService;
-
     private final ChatMemberRepository chatMemberRepository;
-
     private final UserClient userClient;
-
     private final SimpMessagingTemplate messagingTemplate;
-
     private final ActiveChatService activeChatService;
-
     private final NotificationEventPublisher notificationEventPublisher;
-
-
-    // =====================================================
-    // SEND MESSAGE
-    // =====================================================
 
     @MessageMapping("/chat")
     public void sendMessage(ChatMessageRequest request, Principal principal, StompHeaderAccessor accessor) {
-
         if (principal == null) {
-
             System.out.println("❌ CHAT: Principal = null");
-
             return;
         }
-
-
         if (request == null) {
-
             System.out.println("❌ CHAT: request = null");
-
             return;
         }
-
-
         if (request.chatId() == null) {
-
             System.out.println("❌ CHAT: chatId отсутствует");
-
             return;
         }
-
-
         if (request.content() == null || request.content().isBlank()) {
-
             System.out.println("❌ CHAT: content пустой");
-
             return;
         }
-
-
         String senderUsername = principal.getName();
-
-
         String authorization = getAuthorization(accessor);
-
-
         if (authorization == null) {
-
             System.out.println("❌ CHAT: JWT отсутствует");
-
             return;
         }
-
 
         Authentication authentication = new UsernamePasswordAuthenticationToken(senderUsername, null, List.of());
-
-
         MessageResponse savedMessage = messageService.sendMessage(new SendMessageRequest(request.chatId(), request.content()), authentication, authorization);
-
-
-        // =================================================
-        // GET CHAT MEMBERS
-        // =================================================
-
         List<ChatMember> members = chatMemberRepository.findAllByChatId(request.chatId());
-
-
         if (members.isEmpty()) {
-
             return;
         }
-
-
-        // =================================================
-        // COLLECT USER IDS
-        // =================================================
-
         List<Long> userIds = members.stream().map(ChatMember::getUserId).distinct().toList();
-
-
-        // =================================================
-        // BATCH GET USERS
-        // =================================================
-
         List<UserProfileResponse> users;
-
         try {
-
             users = userClient.getUsersByIds(userIds, authorization);
-
         } catch (FeignException e) {
-
             System.out.println("❌ Ошибка AuthService при batch-запросе пользователей: " + e.status());
-
             return;
         }
-
-
-        // =================================================
-        // USER ID → USER
-        // =================================================
-
         Map<Long, UserProfileResponse> usersById = new HashMap<>();
-
-
         for (UserProfileResponse user : users) {
-
             if (user == null || user.id() == null) {
-
                 continue;
             }
-
             usersById.put(user.id(), user);
         }
-
-
-        // =================================================
-        // WEBSOCKET BROADCAST
-        // =================================================
-
         for (ChatMember member : members) {
-
             UserProfileResponse user = usersById.get(member.getUserId());
-
-
             if (user == null || user.username() == null || user.username().isBlank()) {
-
                 continue;
             }
-
-
             messagingTemplate.convertAndSendToUser(user.username(), "/queue/messages", savedMessage);
         }
     }
-
-
-    // =====================================================
-    // OPEN CHAT
-    // =====================================================
 
     @MessageMapping("/chat/open")
     public void openChat(ChatStateRequest request, Principal principal, StompHeaderAccessor accessor) {
@@ -192,96 +102,40 @@ public class WebSocketMessageController {
             return;
         }
 
-
         if (request == null || request.chatId() == null) {
-
             System.out.println("❌ CHAT OPEN: chatId отсутствует");
-
             return;
         }
-
-
         String username = principal.getName();
-
-
         String authorization = getAuthorization(accessor);
-
-
         if (authorization == null) {
-
             System.out.println("❌ CHAT OPEN: JWT отсутствует");
-
             return;
         }
-
-
         UserProfileResponse currentUser;
-
         try {
-
             currentUser = userClient.getUserByUsername(username, authorization);
-
         } catch (FeignException.NotFound e) {
-
             System.out.println("❌ CHAT OPEN: пользователь не найден: " + username);
-
             return;
-
         } catch (FeignException e) {
-
             System.out.println("❌ CHAT OPEN: ошибка AuthService: " + e.status());
-
             return;
         }
-
-
         if (currentUser == null || currentUser.id() == null) {
-
             System.out.println("❌ CHAT OPEN: невозможно определить userId");
-
             return;
         }
-
-
         Long userId = currentUser.id();
-
-
-        // =================================================
-        // CHECK MEMBERSHIP
-        // =================================================
-
         boolean isMember = chatMemberRepository.existsByChatIdAndUserId(request.chatId(), userId);
-
-
         if (!isMember) {
-
             System.out.println("⚠️ CHAT OPEN: пользователь " + username + " попытался открыть чужой чат " + request.chatId());
-
             return;
         }
-
-
-        // =================================================
-        // OPEN ACTIVE CHAT
-        // =================================================
-
         activeChatService.openChat(username, request.chatId());
-
-
-        // =================================================
-        // NOTIFICATION SERVICE
-        // =================================================
-
         notificationEventPublisher.publishChatOpened(username, request.chatId());
-
-
         System.out.println("ACTIVE CHAT: " + username + " -> " + request.chatId());
     }
-
-
-    // =====================================================
-    // CLOSE CHAT
-    // =====================================================
 
     @MessageMapping("/chat/close")
     public void closeChat(Principal principal) {
@@ -290,60 +144,29 @@ public class WebSocketMessageController {
 
             return;
         }
-
-
         String username = principal.getName();
-
-
         Long chatId = activeChatService.getActiveChat(username);
-
-
         activeChatService.closeChat(username);
-
-
         if (chatId != null) {
-
             notificationEventPublisher.publishChatClosed(username, chatId);
         }
-
-
         System.out.println("ACTIVE CHAT CLOSED: " + username + ", chatId=" + chatId);
     }
 
-
-    // =====================================================
-    // GET AUTHORIZATION
-    // =====================================================
-
     private String getAuthorization(StompHeaderAccessor accessor) {
-
         if (accessor == null) {
-
             return null;
         }
-
-
         if (accessor.getSessionAttributes() == null) {
-
             return null;
         }
-
-
         Object jwt = accessor.getSessionAttributes().get(WebSocketAuthInterceptor.JWT_ATTRIBUTE);
-
-
         if (!(jwt instanceof String jwtToken)) {
-
             return null;
         }
-
-
         if (jwtToken.isBlank()) {
-
             return null;
         }
-
-
         return "Bearer " + jwtToken;
     }
 }

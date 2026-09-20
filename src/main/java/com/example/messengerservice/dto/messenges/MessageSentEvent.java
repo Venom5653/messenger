@@ -4,6 +4,7 @@ public record MessageSentEvent(
         String eventType,
         Long messageId,
         Long chatId,
+        String chatName,
         String senderUsername,
         String recipientUsername,
         String content
